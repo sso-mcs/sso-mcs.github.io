@@ -10,8 +10,31 @@
     <!--[if lt IE 9]>
     <script src="https://oss.maxcdn.com/html5shiv/3.7.3/html5shiv.min.js"></script>
     <![endif]-->
+    
+    
     <script src='https://d3js.org/d3.v5.min.js'></script>
-    <style> circle {fill: #2e7bcf; stroke: white;} </style>
+    <script src="https://d3js.org/d3-array.v2.min.js"></script>
+    <script src="https://rawgit.com/susielu/d3-annotation/master/d3-annotation.min.js"></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+    <script src="https://d3js.org/d3-geo-projection.v2.min.js"></script>
+    <style>
+        .row {
+          display: flex;
+        }
+        
+        .narrow-column {
+          float: left;
+          width: 150px;
+          height: 50px;
+        }
+        
+        .column {
+          float: left;
+          width: 50%;
+          height: 50px;
+        }
+    </style>
+
 
 <!-- Begin Jekyll SEO tag v2.8.0 -->
 <title>Yvonne’s Homepage | Narrative Visualization Project</title>
@@ -67,182 +90,401 @@ There should be whitespace between paragraphs.
 
 There should be whitespace between paragraphs. We recommend including a README, or a file with information about your project.-->
 
-<h1 id="header-1">Header 1</h1>
-
-<svg width="300" height="300">
-</svg>
+<h1 id="airbnbs-in-new-york-city">Airbnbs in New York City</h1>
+<div class="row">
+    <div id="select" class="narrow-column">Filter by Borough:</div>
+    <div id="listing" class="narrow-column"></div>
+</div>
+<div class="row">
+    <div id="div_template" class="column"></div>
+    <div id="div_list" class="column"></div>
+</div>
 <script>
 async function init() {
 
-    width = 200,
-    height = 200;
-    margin = 50;
+    width = 400,
+    height = 400;
+    margin = 100;
+    ind = 0;
+    curr_ind = 0;
+
+    // listings.csv of New York City at Inside Airbnb   
+    file = "https://raw.githubusercontent.com/sso-mcs/sso-mcs.github.io/main/data/listings.csv"
+
+
+    /*    drop down list    */
+    var select = d3.select("#select")
+          .append("select")
+          
+    var data = await d3.csv(file);
+    var neighbourhood_group = d3.nest() 
+          .key(function (d) { return d.neighbourhood_group; }) 
+          .sortKeys(d3.ascending) 
+          .entries(data);
+          
+    var ng_data = [];
+    for (var i=0; i < neighbourhood_group.length; i++) {
+        var home = 0, private = 0, shared = 0, hotel = 0;
+        for (var j=0; j < neighbourhood_group[i].values.length; j++) {
+            if(neighbourhood_group[i].values[j].room_type=="Entire home/apt"){
+                home++;
+            }else if(neighbourhood_group[i].values[j].room_type=="Private room"){
+                private+=1;
+            }else if(neighbourhood_group[i].values[j].room_type=="Shared room"){
+                shared+=1;
+            }else if(neighbourhood_group[i].values[j].room_type=="Hotel room"){
+                hotel+=1;
+            }  
+        }
+        ng_data[i] = [{"room_type": "Entire home/apt", "count": home},
+                      {"room_type": "Private room", "count": private},
+                      {"room_type": "Shared room", "count": shared},
+                      {"room_type": "Hotel room", "count": hotel}];
+    }
+            
+    total_listings = d3.count(data, d => d.id);
+    selected_data = neighbourhood_group[0];
+    selected_listings = selected_data.values.length;
+    draw_annotations(total_listings, selected_listings);
     
-    var svg = d3.select("svg")
+    select
+      .on("change", function(d) {
+        curr_ind = d3.select(this).property("value");
+        selected_data = neighbourhood_group[curr_ind];
+        selected_listings = selected_data.values.length;
+        draw_annotations(total_listings, selected_listings);
+        update_chart(ng_data[curr_ind]);
+        d3.selectAll("#div_list > *").remove();
+      });
+    
+    select.selectAll("option")
+      .data(neighbourhood_group)
+      .enter()
+        .append("option")
+        .attr("value", d => ind++)
+        .text(d => d.key);
+    /*    drop down list    */
+    
+    
+    // canvas scene
+    var svg = d3.select("#div_template")
+        .append("svg")
+        .attr("width", width + margin + margin)
+        .attr("height", height + margin + margin)
         .append("g")
         .attr("transform","translate(0,0)");
-    
-    data = await d3.csv("https://flunky.github.io/cars2017.csv");
-    
-    var x = d3.scaleLog([10, 150], [0, width]).base(10);
-    var y = d3.scaleLog([10, 150], [height, 0]).base(10);
-    
-    svg.selectAll("circle")
-        .data(data)
-        .enter()
-        .append("circle")
-        .attr("transform","translate("+margin+","+margin+")")
-        .attr("cx", function (d) { return x(+d.AverageCityMPG); } )
-        .attr("cy", function (d) { return y(+d.AverageHighwayMPG); } )
-        .attr("r", function (d) { return 2 + +d["EngineCylinders"]; });
-    
-    svg.append("g")
-        .attr("transform","translate("+margin+","+margin+")")
-        .call(d3.axisLeft(y).tickValues([10,20,50,100]).tickFormat(d3.format("~s")));
-    
+        
+    // x axis
+    var x = d3.scaleBand()
+        .range([0, width])
+        .domain(ng_data[0].map(d=>d.room_type))
+        .padding(0.2);
     svg.append("g")
         .attr("transform","translate("+margin+","+(+width+margin)+")")
-        .call(d3.axisBottom(x).tickValues([10,20,50,100]).tickFormat(d3.format("~s")));
+        .call(d3.axisBottom(x));
+        
+    // y axis
+    var y = d3.scaleLinear()
+        .domain([0,5000])
+        .range([height, 0]);
+    var y_axis = svg.append("g")
+        .attr("class","y_axis");
+    
+    // x axis label
+    svg.append("text")
+      .attr("text-anchor", "end")      
+      .attr("x", width - margin/2)
+      .attr("y", height + margin + 50)
+      .text("Room Type")
+
+    // y axis label
+    svg.append("text")
+      .attr("text-anchor", "end")
+      .attr("transform", "rotate(-90)")
+      .attr("x", -margin/2 - width/2)
+      .attr("y", margin-50)
+      .text("No. of Listings")
+        
+            
+    // draw chart
+    update_chart(ng_data[curr_ind]);
+    update_chart(ng_data[curr_ind]);
+    
+    // update bar chart
+    function update_chart(data){
+        // update y axis
+        var y = d3.scaleLinear()
+            .domain([0,d3.max(data, function(d) { return d.count })])
+            .range([height, 0]);
+        y_axis.attr("transform","translate("+margin+","+margin+")")
+            .transition().duration(1000)
+            .call(d3.axisLeft(y));
+    
+        var chart = svg.selectAll("rect")
+            .data(data);
+    
+        chart.enter()
+            .append("rect")
+            .merge(chart)
+            .transition()
+            .duration(1000)
+                .attr("x", function(d) { return x(d.room_type); })
+                .attr("y", function(d) { return y(d.count); })
+                .attr("width", x.bandwidth())
+                .attr("height", function(d) { return height - y(d.count); })
+                .attr("transform","translate("+margin+","+margin+")")
+                .attr("fill", "#69b3a2");
+                
+        // tooltip
+        chart.on("mouseover", function(d){
+                d3.select(this)
+                    .style("stroke", "black");
+                svg.append("text")
+                     .attr("class", "val")
+                     .attr("x", (d3.mouse(this)[0]+50) + "px")
+                     .attr("y", (d3.mouse(this)[1]+80) + "px")
+                     .style("fill", "#3a4c40")
+                     .text(d.count + " listings");
+            })
+            .on("mouseleave", function(d){
+                d3.select(this)
+                    .style("stroke", "none");
+                d3.selectAll(".val")
+                    .remove();
+            })
+            .on("click", function(d){
+                show_price_review(d.room_type); 
+            });
+    
+    }
+
+
+    // new scene
+    var svg_list = d3.select("#div_list")
+            .append("svg")
+            .attr("width", width + margin + margin)
+            .attr("height", height + margin + margin)
+            .append("g")
+            .attr("transform","translate(0,0)");
+    
+    var x_axis_plot = svg_list.append("g")
+        .attr("class","x_axis_plot");
+        
+    var y_axis_plot = svg_list.append("g")
+        .attr("class","y_axis_plot");
+    
+    // show scatterplot of price and reviews
+    function show_price_review(room_type){           
+        curr_nb = neighbourhood_group[curr_ind].values;
+
+        var filtered_list = curr_nb.filter(function(d){ 
+           if( d.room_type == room_type){ 
+               return d;
+           } 
+        })
+
+        d3.selectAll("#div_list > *").remove();
+        svg_list = d3.select("#div_list")
+            .append("svg")
+            .attr("width", width + margin + margin)
+            .attr("height", height + margin + margin)
+            .append("g")
+            .attr("transform","translate(0,0)");
+        
+        var x_axis_plot = svg_list.append("g")
+            .attr("class","x_axis_plot");
+        
+        var y_axis_plot = svg_list.append("g")
+            .attr("class","y_axis_plot");
+        
+        // x axis
+        var x_plot = d3.scaleLinear()
+            .domain([0,d3.max(filtered_list, function(d) { return d.number_of_reviews })])
+            .range([0, width])
+            .clamp(true);
+        x_axis_plot.attr("transform","translate("+margin+","+(+width+margin)+")")
+            .transition().duration(1000)
+            .call(d3.axisBottom(x_plot));
+        
+        //y axis
+        var y_plot = d3.scaleLinear()
+            .domain([0,d3.max(filtered_list, function(d) { return d.price })])
+            .range([height, 0])
+            .clamp(true);
+        y_axis_plot.attr("transform","translate("+margin+","+margin+")")
+            .transition().duration(1000)
+            .call(d3.axisLeft(y_plot));
+        
+        // x axis label
+        svg_list.append("text")
+          .attr("text-anchor", "end")      
+          .attr("x", width - margin/2)
+          .attr("y", height + margin + 50)
+          .text("No. of Reviews")
+    
+        // y axis label
+        svg_list.append("text")
+          .attr("text-anchor", "end")
+          .attr("transform", "rotate(-90)")
+          .attr("x", -margin/2 - width/2)
+          .attr("y", margin-50)
+          .text("Price")
+        
+        // scatterplot
+        svg_list.selectAll("circle")
+            .data(filtered_list)
+            .enter()
+            .append("circle")
+            .attr("transform","translate("+margin+","+margin+")")
+            .attr("cx", function (d) { return x_plot(+d.number_of_reviews); } )
+            .attr("cy", function (d) { return y_plot(+d.price); } )
+            .attr("r", function (d) { return d.minimum_nights/10; } )
+            .style("fill", "#69b3a2")
+            .style("opacity", 0.65)
+            .on("mouseover", function(d){
+                svg_list.append("text")
+                     .attr("class", "val2")
+                     .attr("x", (d3.mouse(this)[0]+50) + "px")
+                     .attr("y", (d3.mouse(this)[1]+80) + "px")
+                     .style("fill", "#3a4c40")
+                     .text(d.neighbourhood + " $" + d.price)
+                 svg_list.append("text")
+                     .attr("class", "val2")
+                     .attr("x", (d3.mouse(this)[0]+50) + "px")
+                     .attr("y", (d3.mouse(this)[1]+95) + "px")
+                     .style("fill", "#3a4c40")
+                     .text("Min. " + d.minimum_nights + " nights")
+            })
+            .on("mouseleave", function(d){
+                d3.selectAll(".val2")
+                    .remove()
+            });
+        
+    }
+}
+
+// annotations
+function draw_annotations(total, new_total){
+
+    const annotations = [
+        {
+          note: {
+            label: "out of "+total+" listings",
+            title: new_total
+          },
+          x: 100,
+          y: 0,
+          dy: 0,
+          dx: 0
+        }].map(function(d){ d.color = "#E8336D"; return d});
+        
+    const makeAnnotations = d3.annotation()
+          .type(d3.annotationLabel)
+          .annotations(annotations);
+
+    d3.selectAll("#listing > *").remove();
+      
+    svg = d3.select("#listing")
+        .append("svg")
+        .append("g")
+        .attr("transform","translate(0,0)")
+        .call(makeAnnotations);
 
 }
+
 </script>
 
-<p>This is a normal paragraph following a header. GitHub is a code hosting platform for version control and collaboration. It lets you and others work together on projects from anywhere.</p>
+<!--            
+This is a normal paragraph following a header. GitHub is a code hosting platform for version control and collaboration. It lets you and others work together on projects from anywhere.
 
-<h2 id="header-2">Header 2</h2>
+## Header 2
 
-<blockquote>
-  <p>This is a blockquote following a header.</p>
+> This is a blockquote following a header.
+>
+> When something is important enough, you do it even if the odds are not in your favor.
 
-  <p>When something is important enough, you do it even if the odds are not in your favor.</p>
-</blockquote>
+### Header 3
 
-<h3 id="header-3">Header 3</h3>
+```js
+// Javascript code with syntax highlighting.
+var fun = function lang(l) {
+  dateformat.i18n = require('./lang/' + l)
+  return true;
+}
+```
 
-<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// Javascript code with syntax highlighting.</span>
-<span class="kd">var</span> <span class="nx">fun</span> <span class="o">=</span> <span class="kd">function</span> <span class="nx">lang</span><span class="p">(</span><span class="nx">l</span><span class="p">)</span> <span class="p">{</span>
-  <span class="nx">dateformat</span><span class="p">.</span><span class="nx">i18n</span> <span class="o">=</span> <span class="nx">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./lang/</span><span class="dl">'</span> <span class="o">+</span> <span class="nx">l</span><span class="p">)</span>
-  <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
-<span class="p">}</span>
-</code></pre></div></div>
+```ruby
+# Ruby code with syntax highlighting
+GitHubPages::Dependencies.gems.each do |gem, version|
+  s.add_dependency(gem, "= #{version}")
+end
+```
 
-<div class="language-ruby highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># Ruby code with syntax highlighting</span>
-<span class="no">GitHubPages</span><span class="o">::</span><span class="no">Dependencies</span><span class="p">.</span><span class="nf">gems</span><span class="p">.</span><span class="nf">each</span> <span class="k">do</span> <span class="o">|</span><span class="n">gem</span><span class="p">,</span> <span class="n">version</span><span class="o">|</span>
-  <span class="n">s</span><span class="p">.</span><span class="nf">add_dependency</span><span class="p">(</span><span class="n">gem</span><span class="p">,</span> <span class="s2">"= </span><span class="si">#{</span><span class="n">version</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="k">end</span>
-</code></pre></div></div>
+#### Header 4
 
-<h4 id="header-4">Header 4</h4>
+*   This is an unordered list following a header.
+*   This is an unordered list following a header.
+*   This is an unordered list following a header.
 
-<ul>
-  <li>This is an unordered list following a header.</li>
-  <li>This is an unordered list following a header.</li>
-  <li>This is an unordered list following a header.</li>
-</ul>
+##### Header 5
 
-<h5 id="header-5">Header 5</h5>
+1.  This is an ordered list following a header.
+2.  This is an ordered list following a header.
+3.  This is an ordered list following a header.
 
-<ol>
-  <li>This is an ordered list following a header.</li>
-  <li>This is an ordered list following a header.</li>
-  <li>This is an ordered list following a header.</li>
-</ol>
+###### Header 6
 
-<h6 id="header-6">Header 6</h6>
+| head1        | head two          | three |
+|:-------------|:------------------|:------|
+| ok           | good swedish fish | nice  |
+| out of stock | good and plenty   | nice  |
+| ok           | good `oreos`      | hmm   |
+| ok           | good `zoute` drop | yumm  |
 
-<table>
-  <thead>
-    <tr>
-      <th style="text-align: left">head1</th>
-      <th style="text-align: left">head two</th>
-      <th style="text-align: left">three</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="text-align: left">ok</td>
-      <td style="text-align: left">good swedish fish</td>
-      <td style="text-align: left">nice</td>
-    </tr>
-    <tr>
-      <td style="text-align: left">out of stock</td>
-      <td style="text-align: left">good and plenty</td>
-      <td style="text-align: left">nice</td>
-    </tr>
-    <tr>
-      <td style="text-align: left">ok</td>
-      <td style="text-align: left">good <code class="language-plaintext highlighter-rouge">oreos</code></td>
-      <td style="text-align: left">hmm</td>
-    </tr>
-    <tr>
-      <td style="text-align: left">ok</td>
-      <td style="text-align: left">good <code class="language-plaintext highlighter-rouge">zoute</code> drop</td>
-      <td style="text-align: left">yumm</td>
-    </tr>
-  </tbody>
-</table>
+### There's a horizontal rule below this.
 
-<h3 id="theres-a-horizontal-rule-below-this">There’s a horizontal rule below this.</h3>
+* * *
 
-<hr />
+### Here is an unordered list:
 
-<h3 id="here-is-an-unordered-list">Here is an unordered list:</h3>
+*   Item foo
+*   Item bar
+*   Item baz
+*   Item zip
 
-<ul>
-  <li>Item foo</li>
-  <li>Item bar</li>
-  <li>Item baz</li>
-  <li>Item zip</li>
-</ul>
+### And an ordered list:
 
-<h3 id="and-an-ordered-list">And an ordered list:</h3>
+1.  Item one
+1.  Item two
+1.  Item three
+1.  Item four
 
-<ol>
-  <li>Item one</li>
-  <li>Item two</li>
-  <li>Item three</li>
-  <li>Item four</li>
-</ol>
+### And a nested list:
 
-<h3 id="and-a-nested-list">And a nested list:</h3>
+- level 1 item
+  - level 2 item
+  - level 2 item
+    - level 3 item
+    - level 3 item
+- level 1 item
+  - level 2 item
+  - level 2 item
+  - level 2 item
+- level 1 item
+  - level 2 item
+  - level 2 item
+- level 1 item
 
-<ul>
-  <li>level 1 item
-    <ul>
-      <li>level 2 item</li>
-      <li>level 2 item
-        <ul>
-          <li>level 3 item</li>
-          <li>level 3 item</li>
-        </ul>
-      </li>
-    </ul>
-  </li>
-  <li>level 1 item
-    <ul>
-      <li>level 2 item</li>
-      <li>level 2 item</li>
-      <li>level 2 item</li>
-    </ul>
-  </li>
-  <li>level 1 item
-    <ul>
-      <li>level 2 item</li>
-      <li>level 2 item</li>
-    </ul>
-  </li>
-  <li>level 1 item</li>
-</ul>
+### Small image
 
-<h3 id="small-image">Small image</h3>
+![Octocat](https://github.githubassets.com/images/icons/emoji/octocat.png)
 
-<p><img src="https://github.githubassets.com/images/icons/emoji/octocat.png" alt="Octocat" /></p>
+### Large image
 
-<h3 id="large-image">Large image</h3>
+![Branching](https://guides.github.com/activities/hello-world/branching.png)
 
-<p><img src="https://guides.github.com/activities/hello-world/branching.png" alt="Branching" /></p>
 
-<h3 id="definition-lists-can-be-used-with-html-syntax">Definition lists can be used with HTML syntax.</h3>
+### Definition lists can be used with HTML syntax.
 
 <dl>
 <dt>Name</dt>
@@ -255,14 +497,18 @@ async function init() {
 <dd>Green</dd>
 </dl>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Long, single-line code blocks should not wrap. They should horizontally scroll if they are too long. This line should be long enough to demonstrate this.
-</code></pre></div></div>
+```
+Long, single-line code blocks should not wrap. They should horizontally scroll if they are too long. This line should be long enough to demonstrate this.
+```
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>The final element.
-</code></pre></div></div>
+```
+The final element.
+```
+-->
 
         </section>
 
+<!--
         <aside id="sidebar">
           
             <a href="" class="button">
@@ -279,6 +525,7 @@ async function init() {
 
           <p>This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</p>
         </aside>
+        -->
       </div>
     </div>
 
